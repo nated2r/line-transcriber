@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+line-bot-sdk
+python-dotenv
+openai
+yt-dlp
+

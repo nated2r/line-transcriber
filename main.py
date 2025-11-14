@@ -3,6 +3,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -35,10 +36,18 @@ INSTAGRAM_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?instagram\.com/(?:reel|p|tv)/[A-Za-z0-9_\-]+",
     re.IGNORECASE,
 )
+YOUTUBE_SHORTS_URL_PATTERN = re.compile(
+    r"https?://(?:www\.|m\.)?youtube\.com/shorts/[A-Za-z0-9_\-]+(?:\?[^\s]*)?",
+    re.IGNORECASE,
+)
 
 
 def is_instagram_url(text: str) -> bool:
     return bool(INSTAGRAM_URL_PATTERN.search(text))
+
+
+def is_youtube_shorts_url(text: str) -> bool:
+    return bool(YOUTUBE_SHORTS_URL_PATTERN.search(text))
 
 
 def run_command(command: list[str]) -> None:
@@ -51,7 +60,7 @@ def run_command(command: list[str]) -> None:
         )
 
 
-def download_instagram_video(url: str) -> Path:
+def download_video(url: str) -> Path:
     work_dir = Path(tempfile.mkdtemp(prefix="ig_dl_"))
     output_template = work_dir / "%(id)s.%(ext)s"
     run_command(["yt-dlp", "-o", str(output_template), url])
@@ -92,9 +101,17 @@ def transcribe_audio(audio_path: Path) -> str:
 
 
 def process_instagram_link(url: str) -> str:
+    return process_media_link(url)
+
+
+def process_youtube_shorts_link(url: str) -> str:
+    return process_media_link(url)
+
+
+def process_media_link(url: str) -> str:
     video_path: Path | None = None
     try:
-        video_path = download_instagram_video(url)
+        video_path = download_video(url)
         audio_path = extract_audio(video_path)
         transcript = transcribe_audio(audio_path)
         return transcript
@@ -140,28 +157,23 @@ def handle_message(event: MessageEvent):
     if isinstance(event.message, TextMessage):
         incoming_text = event.message.text.strip()
         if is_instagram_url(incoming_text):
-            try:
-                transcript = process_instagram_link(incoming_text)
-                reply_text = f"IG 轉錄結果：\n{transcript}"
-            except Exception as exc:
-                reply_text = f"處理 IG 連結時發生錯誤：{exc}"
-            if is_active:
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text=reply_text),
-                )
-            else:
-                user_id = getattr(event.source, "user_id", None)
-                if user_id:
-                    line_bot_api.push_message(
-                        user_id,
-                        TextSendMessage(text=reply_text),
-                    )
-                else:
-                    print("standby 事件缺少 user_id，無法推播回覆。")
+            reply_text = handle_supported_link(
+                incoming_text,
+                process_instagram_link,
+                "IG 連結",
+            )
+            send_reply(event, reply_text, is_active)
+            return
+        if is_youtube_shorts_url(incoming_text):
+            reply_text = handle_supported_link(
+                incoming_text,
+                process_youtube_shorts_link,
+                "YouTube Shorts 連結",
+            )
+            send_reply(event, reply_text, is_active)
             return
 
-    default_reply = TextSendMessage(text="請傳送 IG 連結，我會幫你轉成文字。")
+    default_reply = TextSendMessage(text="請傳送 IG 或 YouTube Shorts 連結，我會幫你轉成文字。")
     if is_active:
         line_bot_api.reply_message(event.reply_token, default_reply)
     else:
@@ -170,4 +182,28 @@ def handle_message(event: MessageEvent):
             line_bot_api.push_message(user_id, default_reply)
         else:
             print("standby 事件缺少 user_id，無法推播預設訊息。")
+
+
+def handle_supported_link(
+    url: str,
+    processor: Callable[[str], str],
+    label: str,
+) -> str:
+    try:
+        transcript = processor(url)
+        return f"{label}轉錄結果：\n{transcript}"
+    except Exception as exc:
+        return f"處理 {label} 時發生錯誤：{exc}"
+
+
+def send_reply(event: MessageEvent, reply_text: str, is_active: bool) -> None:
+    message = TextSendMessage(text=reply_text)
+    if is_active:
+        line_bot_api.reply_message(event.reply_token, message)
+    else:
+        user_id = getattr(event.source, "user_id", None)
+        if user_id:
+            line_bot_api.push_message(user_id, message)
+        else:
+            print("standby 事件缺少 user_id，無法推播回覆。")
 

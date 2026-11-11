@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>按鍵精靈文字產生器</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--text:#1d2530;--muted:#6b7684;--line:#dde1e7;--accent:#2f6fed;--danger:#d64545}
+  @media (prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1d222a;--text:#e6e9ee;--muted:#98a2b0;--line:#2e3540;--accent:#6c9bff;--danger:#ff7b7b}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,"Microsoft JhengHei","PingFang TC",sans-serif}
+  main{max-width:860px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  p.sub{color:var(--muted);margin:0 0 18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input[type=text]{flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--text)}
+  textarea{width:100%;min-height:110px;margin-top:8px;padding:8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--text);font:inherit;resize:vertical}
+  textarea.out{min-height:260px;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace}
+  button{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--text);cursor:pointer;font:inherit}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.del{color:var(--danger)}
+  label.opt{display:inline-flex;gap:6px;align-items:center;margin-right:14px}
+  .opts{display:flex;flex-wrap:wrap;gap:6px 0;margin-bottom:10px}
+  .warn{color:var(--danger);font-size:13px;margin-top:6px;min-height:1em}
+  .hint{color:var(--muted);font-size:13px}
+  select{padding:5px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--text)}
+  input[type=number]{width:80px;padding:5px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--text)}
+</style>
+</head>
+<body>
+<main>
+  <h1>按鍵精靈文字產生器</h1>
+  <p class="sub">每個步驟貼上一段文字（可多行），按「產生腳本」就會得到可直接貼進按鍵精靈的程式碼。資料只存在你瀏覽器本機，Mac / Windows 都能用。</p>
+
+  <div id="steps"></div>
+  <div class="row" style="margin-bottom:18px">
+    <button id="add">＋ 新增步驟</button>
+    <button id="export">匯出 JSON</button>
+    <button id="import">匯入 JSON</button>
+    <input type="file" id="file" accept=".json" hidden>
+  </div>
+
+  <div class="card">
+    <div class="opts">
+      <label class="opt">換行方式
+        <select id="mode">
+          <option value="shift">每行用 Shift+Enter（適用 LINE，不會提早送出）</option>
+          <option value="crlf">用 vbCrLf 串成一個字串（一般輸入框）</option>
+        </select>
+      </label>
+      <label class="opt"><input type="checkbox" id="emoji" checked> emoji 轉 ChrW（避免編輯器變問號）</label>
+      <label class="opt"><input type="checkbox" id="send" checked> 每步驟結尾按 Enter 送出</label>
+      <label class="opt">步驟間延遲(毫秒) <input type="number" id="delay" value="1000" min="0" step="100"></label>
+    </div>
+    <div class="row"><button class="primary" id="gen">產生腳本</button><button id="copy">複製腳本</button><span class="hint" id="msg"></span></div>
+    <div class="warn" id="warn"></div>
+    <textarea class="out" id="out" readonly placeholder="腳本會顯示在這裡"></textarea>
+    <p class="hint">提醒：按鍵精靈的 SayString 對 emoji 不一定能輸入。若最後送出的是亂碼或空白，請改在步驟中不要使用 emoji。Mac 版按鍵精靈的語法可能與 Windows 版不同，如有錯誤請把錯誤訊息告訴我。</p>
+  </div>
+</main>
+
+<script>
+const KEY='macro-steps-v1';
+let steps=[];
+try{steps=JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){}
+if(!steps.length)steps=[{name:'步驟 1',text:''}];
+
+const $=id=>document.getElementById(id);
+function save(){try{localStorage.setItem(KEY,JSON.stringify(steps))}catch(e){}}
+
+function render(){
+  const box=$('steps');box.innerHTML='';
+  steps.forEach((s,i)=>{
+    const d=document.createElement('div');d.className='card';
+    d.innerHTML='<div class="row"><b>#'+(i+1)+'</b><input type="text" placeholder="步驟名稱"><button class="up">↑</button><button class="dn">↓</button><button class="del">刪除</button></div><textarea placeholder="貼上這一步要輸入的文字，可多行"></textarea>';
+    const [name]=d.getElementsByTagName('input');const ta=d.querySelector('textarea');
+    name.value=s.name;ta.value=s.text;
+    name.oninput=()=>{s.name=name.value;save()};
+    ta.oninput=()=>{s.text=ta.value;save()};
+    d.querySelector('.del').onclick=()=>{if(steps.length>1||s.text){steps.splice(i,1);if(!steps.length)steps.push({name:'步驟 1',text:''});save();render()}};
+    d.querySelector('.up').onclick=()=>{if(i>0){[steps[i-1],steps[i]]=[steps[i],steps[i-1]];save();render()}};
+    d.querySelector('.dn').onclick=()=>{if(i<steps.length-1){[steps[i+1],steps[i]]=[steps[i],steps[i+1]];save();render()}};
+    box.appendChild(d);
+  });
+}
+
+// 把一行文字轉成 VBScript 字串運算式
+function lit(line,emoji){
+  const parts=[];let buf='';
+  const flush=()=>{if(buf!==''){parts.push('"'+buf.replace(/"/g,'""')+'"');buf=''}};
+  for(const ch of line){
+    if(emoji&&ch.codePointAt(0)>0xFFFF){
+      flush();
+      for(let k=0;k<ch.length;k++)parts.push('ChrW(&H'+ch.charCodeAt(k).toString(16).toUpperCase()+')');
+    }else buf+=ch;
+  }
+  flush();
+  return parts.length?parts.join(' & '):'""';
+}
+
+function generate(){
+  const mode=$('mode').value,emoji=$('emoji').checked,send=$('send').checked;
+  const delay=Math.max(0,parseInt($('delay').value)||0);
+  let out=[],warn=[];
+  if(mode==='shift'){
+    out.push('Sub NewLine()','    KeyDown "Shift", 1','    KeyPress "Enter", 1','    KeyUp "Shift", 1','End Sub','');
+  }
+  const calls=[];
+  steps.forEach((s,i)=>{
+    const lines=s.text.replace(/\r\n?/g,'\n').split('\n');
+    while(lines.length&&lines[lines.length-1]==='')lines.pop();
+    if(!lines.length)return;
+    if(!emoji&&/[\u{10000}-\u{10FFFF}]/u.test(s.text))warn.push('「'+s.name+'」含 emoji，未轉 ChrW 可能在編輯器變成問號。');
+    if(/\?\?/.test(s.text))warn.push('「'+s.name+'」含連續問號 ??，可能是 emoji 已經被其他軟體弄壞，請重新貼上原始文字。');
+    const fn='Step'+(i+1);calls.push(fn);
+    out.push("' "+s.name,'Sub '+fn+'()');
+    if(mode==='shift'){
+      lines.forEach((ln,k)=>{
+        if(ln!=='')out.push('    SayString '+lit(ln,emoji));
+        if(k<lines.length-1)out.push('    Call NewLine()');
+      });
+    }else{
+      lines.forEach((ln,k)=>{
+        const e=lit(ln,emoji)+(k<lines.length-1?' & vbCrLf':'');
+        out.push('    '+(k===0?'txt = ':'txt = txt & ')+e);
+      });
+      out.push('    SayString txt');
+    }
+    if(send)out.push('    KeyPress "Enter", 1');
+    out.push('End Sub','');
+  });
+  if(!calls.length){$('out').value='';$('warn').textContent='請至少填寫一個步驟的文字。';return}
+  out.push("' ===== 主程式 =====");
+  calls.forEach((c,i)=>{out.push('Call '+c+'()');if(delay&&i<calls.length-1)out.push('Delay '+delay)});
+  $('out').value=out.join('\n');
+  $('warn').textContent=[...new Set(warn)].join(' ');
+}
+
+$('gen').onclick=generate;
+$('add').onclick=()=>{steps.push({name:'步驟 '+(steps.length+1),text:''});save();render()};
+$('copy').onclick=async()=>{
+  const t=$('out').value;if(!t)return;
+  try{await navigator.clipboard.writeText(t)}catch(e){$('out').select();document.execCommand('copy')}
+  $('msg').textContent='已複製';setTimeout(()=>$('msg').textContent='',1500);
+};
+$('export').onclick=()=>{
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(steps,null,2)],{type:'application/json'}));
+  a.download='macro-steps.json';a.click();URL.revokeObjectURL(a.href);
+};
+$('import').onclick=()=>$('file').click();
+$('file').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{const d=JSON.parse(await f.text());if(Array.isArray(d)&&d.every(x=>typeof x.text==='string')){steps=d.map((x,i)=>({name:x.name||'步驟 '+(i+1),text:x.text}));save();render()}else alert('格式不正確')}catch(err){alert('無法讀取檔案')}
+  e.target.value='';
+};
+render();
+</script>
+</body>
+</html>
